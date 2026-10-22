@@ -19,7 +19,9 @@ import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/
 const PORT = process.env.PORT || 3000;
 const TOKEN = process.env.DISCORD_BOT_TOKEN;
 const SECRET = process.env.MCP_SECRET;
-const DATA_DIR = process.env.DATA_DIR || "./data";
+// Render's filesystem is ephemeral – /tmp is always writable.
+// Set DATA_DIR=/var/data if you attach a persistent disk.
+const DATA_DIR = process.env.DATA_DIR || (fs.existsSync("/var/data") ? "/var/data" : "/tmp/discord-mcp-data");
 const PRIVILEGED = (process.env.PRIVILEGED_INTENTS || "true") === "true";
 const MAX_LOGS = 5000;
 
@@ -123,7 +125,7 @@ if (TOKEN) {
 }
 
 const needBot = () => {
-  if (!client.isReady()) throw new Error("Discord bot is not connected. Set DISCORD_BOT_TOKEN and check the Railway logs.");
+  if (!client.isReady()) throw new Error("Discord bot is not connected. Set DISCORD_BOT_TOKEN and check the server logs.");
 };
 
 // ───────────────────────── Scheduler ─────────────────────────
@@ -205,7 +207,7 @@ function buildServer() {
 
   // ── Bot ──
   tool(s, "bot_status", "Show whether the Discord bot is online, its name, servers and uptime.", {}, async () => {
-    if (!client.isReady()) return { online: false, hint: "Set DISCORD_BOT_TOKEN in Railway variables." };
+    if (!client.isReady()) return { online: false, hint: "Set DISCORD_BOT_TOKEN in environment variables." };
     return {
       online: true,
       bot: client.user.tag,
@@ -269,14 +271,14 @@ function buildServer() {
     }
   );
   tool(s, "list_auto_replies", "List auto-replies.", {}, async () => db.autoReplies);
-  tool(s, "remove_auto_reply", "Delete an auto-reply by id.", { id: z.string() }, async ({ id }) => {
+  tool(s, "remove_auto_reply", "Remove an auto-reply by id.", { id: z.string() }, async ({ id }) => {
     db.autoReplies = db.autoReplies.filter((r) => r.id !== id);
     save();
     return "Removed.";
   });
 
   // ── Server management ──
-  tool(s, "list_servers", "List servers the bot is in.", {}, async () => {
+  tool(s, "list_servers", "List Discord servers the bot is in.", {}, async () => {
     needBot();
     return client.guilds.cache.map((g) => ({ id: g.id, name: g.name, members: g.memberCount }));
   });
@@ -469,7 +471,8 @@ const guard = (req, res, next) => {
   next();
 };
 
-// MCP endpoint (Streamable HTTP, stateless)
+// MCP endpoint (Streamable HTTP, stateless) – works with ChatGPT custom connectors,
+// Claude Desktop, and any MCP client that supports remote Streamable HTTP.
 app.post("/mcp/:secret", guard, async (req, res) => {
   const server = buildServer();
   const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
@@ -513,6 +516,70 @@ tbl.innerHTML='<tr><th>Hour (UTC)<th>Msgs<th>Joins<th>Leaves<th>Tools<th>Ann.<th
 logs.innerHTML=d.logs.slice().reverse().map(l=>'<div class="'+l.level+'">'+l.t.slice(11,19)+' ['+l.type+'] '+l.message.replace(/</g,'&lt;')+'</div>').join('');}
 tick();setInterval(tick,3000);
 </script>`);
+});
+
+// ── Root route: fixes "Cannot GET /" and shows connection info ──
+app.get("/", (_req, res) => {
+  const base = `${req.protocol}://${req.get("host")}`;
+  res.type("html").send(`<!doctype html>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Discord MCP Connector</title>
+<style>
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{font:15px/1.6 system-ui,-apple-system,sans-serif;background:#0d1117;color:#e6edf3;min-height:100vh;display:flex;align-items:center;justify-content:center;padding:24px}
+  .card{background:#161b22;border:1px solid #30363d;border-radius:12px;max-width:640px;width:100%;padding:32px}
+  h1{font-size:22px;margin-bottom:4px;display:flex;align-items:center;gap:10px}
+  .dot{width:10px;height:10px;border-radius:50%;display:inline-block}
+  .on{background:#3fb950}.off{background:#f85149}
+  p.sub{color:#8b949e;margin-bottom:20px;font-size:13px}
+  h2{font-size:13px;text-transform:uppercase;letter-spacing:.5px;color:#8b949e;margin:20px 0 8px}
+  code{background:#0d1117;border:1px solid #30363d;padding:2px 7px;border-radius:6px;font-size:12.5px;color:#79c0ff;word-break:break-all}
+  .url{display:block;background:#0d1117;border:1px solid #30363d;border-radius:8px;padding:10px 12px;margin:6px 0;font-family:ui-monospace,monospace;font-size:12px;color:#79c0ff;word-break:break-all}
+  ol{margin-left:20px;font-size:13.5px;color:#c9d1d9}
+  ol li{margin-bottom:6px}
+  .badge{display:inline-block;background:#1f6feb22;border:1px solid #1f6feb;color:#79c0ff;font-size:11px;padding:2px 8px;border-radius:20px;margin-right:6px}
+  .row{display:flex;gap:8px;flex-wrap:wrap;margin-top:4px}
+</style>
+<div class="card">
+  <h1><span class="dot ${client.isReady() ? "on" : "off"}"></span> Discord MCP Connector</h1>
+  <p class="sub">Remote MCP server for Discord server management · v1.0.0</p>
+
+  <div class="row">
+    <span class="badge">Streamable HTTP</span>
+    <span class="badge">ChatGPT Custom Connector</span>
+    <span class="badge">Claude Desktop</span>
+    <span class="badge">MCP Protocol</span>
+  </div>
+
+  <h2>Connection URL (keep your secret private)</h2>
+  <span class="url">${base}/mcp/&lt;YOUR_MCP_SECRET&gt;</span>
+
+  <h2>How to connect</h2>
+  <ol>
+    <li><b>ChatGPT</b> → Settings → Connectors → Add → paste the URL above (it includes your secret).</li>
+    <li><b>Claude Desktop</b> → add to <code>claude_desktop_config.json</code>:
+      <span class="url">"url": "${base}/mcp/&lt;YOUR_MCP_SECRET&gt;"</span>
+    </li>
+    <li><b>Cursor / other MCP clients</b> → use the same URL as a remote Streamable HTTP server.</li>
+  </ol>
+
+  <h2>Other endpoints</h2>
+  <ol>
+    <li>Health check: <code>${base}/health</code></li>
+    <li>Live dashboard: <code>${base}/dashboard/&lt;YOUR_MCP_SECRET&gt;</code></li>
+  </ol>
+
+  <h2>Status</h2>
+  <p style="font-size:13.5px;color:#c9d1d9">
+    Bot: <b style="color:${client.isReady() ? "#3fb950" : "#f85149"}">${client.isReady() ? client.user.tag + " (online)" : "offline – set DISCORD_BOT_TOKEN"}</b><br>
+    Data dir: <code>${DATA_DIR}</code>
+  </p>
+</div>`);
+});
+
+// 404 handler for any other unknown route (fixes generic "Cannot GET /xyz")
+app.use((_req, res) => {
+  res.status(404).json({ error: "Not found", hint: "GET / for connection info, POST /mcp/:secret for MCP." });
 });
 
 app.listen(PORT, () => console.log(`Discord MCP listening on :${PORT}`));

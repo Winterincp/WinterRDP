@@ -1,0 +1,20 @@
+services:
+  - type: web
+    name: discord-mcp
+    runtime: node
+    plan: free
+    buildCommand: yarn install --frozen-lockfile
+    startCommand: yarn start
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_VERSION
+        value: "20"
+      - key: MCP_SECRET
+        generateValue: true
+      - key: DISCORD_BOT_TOKEN
+        sync: false
+      - key: PRIVILEGED_INTENTS
+        value: "true"
+      # Optional: attach a persistent disk and set DATA_DIR=/var/data
+      # - key: DATA_DIR
+      #   value: /var/data

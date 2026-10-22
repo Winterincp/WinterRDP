@@ -1,11 +1,12 @@
 {
   "name": "discord-mcp-connector",
   "version": "1.0.0",
-  "description": "Remote MCP connector for Claude & ChatGPT to manage Discord servers, bots, scheduled announcements and hourly logs",
+  "description": "Remote MCP connector for Claude, ChatGPT & other MCP clients to manage Discord servers, bots, scheduled announcements and hourly logs",
   "type": "module",
   "main": "server.js",
   "scripts": {
-    "start": "node server.js"
+    "start": "node server.js",
+    "dev": "node --watch server.js"
   },
   "engines": {
     "node": ">=20"
