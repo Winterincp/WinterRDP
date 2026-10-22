@@ -1,0 +1,49 @@
+name: Unarchive All Zip Files
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch: # Allows you to run this manually from the Actions tab
+
+jobs:
+  unzip-files:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # Required if you want to commit the extracted files back to the repo
+
+    steps:
+      # 1. Check out the repository content
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      # 2. Find and extract all zip files
+      - name: Unarchive All Zip Files
+        run: |
+          # Use find to locate all .zip files and extract them safely in their current location
+          find . -name "*.zip" -type f -exec sh -c '
+            for file do
+              echo "Extracting: $file"
+              # Get the directory where the zip sits
+              dir=$(dirname "$file")
+              # Unzip into that specific directory (-o overwrites existing files if necessary)
+              unzip -o "$file" -d "$dir"
+              # Optional: Remove the zip file after extraction
+              rm "$file"
+            done
+          ' _ {} +
+
+      # 3. Commit and push the changes back to your repository (Optional)
+      - name: Commit and Push Changes
+        run: |
+          git config --local user.email "github-actions[bot]@users.noreply.github.com"
+          git config --local user.name "github-actions[bot]"
+          git add .
+          
+          # Check if there are any changes to commit so the workflow doesn't fail
+          if ! git diff-index --quiet HEAD; then
+            git commit -m "chore: auto-unarchive zip files via GitHub Actions"
+            git push origin ${{ github.ref_name }}
+          else
+            echo "No new changes to commit."
+          fi
