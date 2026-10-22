@@ -1,0 +1,342 @@
+name: WinterRDP by DevLite - Remote Desktop Environment
+
+on:
+  workflow_dispatch:
+    inputs:
+      session_duration:
+        description: 'Session duration in minutes (default: 60)'
+        required: false
+        default: '60'
+      anydesk_password:
+        description: 'AnyDesk unattended access password'
+        required: false
+        default: 'WinterRDP2024!'
+
+env:
+  ANYDESK_PASSWORD: ${{ github.event.inputs.anydesk_password || 'WinterRDP2024!' }}
+  SESSION_DURATION: ${{ github.event.inputs.session_duration || '60' }}
+
+jobs:
+  winterrdp-setup:
+    runs-on: windows-latest
+    timeout-minutes: 120
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Display WinterRDP Banner
+        shell: powershell
+        run: |
+          Write-Host "===================================================="
+          Write-Host "        WinterRDP by DevLite - Setup Starting"
+          Write-Host "===================================================="
+          Write-Host "Session Duration: ${{ env.SESSION_DURATION }} minutes"
+          Write-Host "AnyDesk Password: [CONFIGURED]"
+
+      - name: Disable Windows Defender (For Performance)
+        shell: powershell
+        run: |
+          try {
+            Write-Host "Disabling Windows Defender real-time protection..."
+            Set-MpPreference -DisableRealtimeMonitoring $true -ErrorAction SilentlyContinue
+            Write-Host "Windows Defender configured"
+          } catch {
+            Write-Host "WARNING: Could not modify Windows Defender (may require admin)"
+          }
+
+      - name: Install AnyDesk (Remote Connection)
+        shell: powershell
+        run: |
+          Write-Host "Installing AnyDesk..."
+
+          $anyDeskUrl = "https://download.anydesk.com/AnyDesk.exe"
+          $downloadPath = "C:\Temp\AnyDesk.exe"
+
+          if (-not (Test-Path "C:\Temp")) {
+            New-Item -ItemType Directory -Path "C:\Temp" -Force | Out-Null
+          }
+
+          [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+
+          $downloaded = $false
+          $attempt = 1
+
+          while ($attempt -le 3 -and -not $downloaded) {
+            try {
+              Write-Host "Downloading AnyDesk (attempt $attempt of 3)..."
+              Invoke-WebRequest -Uri $anyDeskUrl -OutFile $downloadPath -TimeoutSec 30
+              $downloaded = $true
+              Write-Host "Download completed"
+            } catch {
+              Write-Host "Download attempt $attempt failed: $($_.Exception.Message)"
+              $attempt = $attempt + 1
+              if ($attempt -le 3) {
+                Start-Sleep -Seconds 5
+              }
+            }
+          }
+
+          if (-not $downloaded) {
+            Write-Host "ERROR: Failed to download AnyDesk after 3 attempts"
+            exit 1
+          }
+
+          Write-Host "Installing AnyDesk silently..."
+          Start-Process -FilePath $downloadPath -ArgumentList "--install", "C:\Program Files (x86)\AnyDesk", "--start-with-win", "--create-shortcuts", "--silent" -Wait -NoNewWindow
+
+          Start-Sleep -Seconds 10
+
+          $anyDeskExe = "C:\Program Files (x86)\AnyDesk\AnyDesk.exe"
+          if (Test-Path $anyDeskExe) {
+            Write-Host "AnyDesk installed successfully"
+            Write-Host "Location: $anyDeskExe"
+          } else {
+            Write-Host "ERROR: AnyDesk installation path not found"
+            exit 1
+          }
+
+          Remove-Item $downloadPath -Force -ErrorAction SilentlyContinue
+
+      - name: Configure AnyDesk Unattended Access
+        shell: powershell
+        run: |
+          Write-Host "Configuring AnyDesk unattended access..."
+
+          $anyDeskExe = "C:\Program Files (x86)\AnyDesk\AnyDesk.exe"
+
+          try {
+            Start-Service -Name "AnyDesk" -ErrorAction SilentlyContinue
+            Start-Sleep -Seconds 5
+
+            $pw = "${{ env.ANYDESK_PASSWORD }}"
+            & $anyDeskExe --set-password $pw 2>$null | Out-Null
+
+            Write-Host "AnyDesk unattended access configured"
+          } catch {
+            Write-Host "WARNING: Error configuring AnyDesk settings: $($_.Exception.Message)"
+          }
+
+      - name: Apply Winter Theme and Wallpaper
+        shell: powershell
+        run: |
+          Write-Host "Applying winter-themed wallpaper..."
+
+          $wallpaperDir = "C:\Temp\Wallpapers"
+          if (-not (Test-Path $wallpaperDir)) {
+            New-Item -ItemType Directory -Path $wallpaperDir -Force | Out-Null
+          }
+
+          $wallpaperUrl = "https://images.unsplash.com/photo-1511884642898-4c92249e20b6?w=1920&h=1080&fit=crop"
+          $wallpaperPath = "$wallpaperDir\WinterRDP_Wallpaper.jpg"
+
+          try {
+            [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+            Invoke-WebRequest -Uri $wallpaperUrl -OutFile $wallpaperPath -TimeoutSec 15
+            Write-Host "Winter wallpaper downloaded"
+
+            $regPath = "HKCU:\Control Panel\Desktop"
+            Set-ItemProperty -Path $regPath -Name "Wallpaper" -Value $wallpaperPath
+            rundll32.exe user32.dll, UpdatePerUserSystemParameters
+            Write-Host "Wallpaper applied"
+          } catch {
+            Write-Host "WARNING: Could not download online wallpaper, applying local theme instead"
+            try {
+              $regPath = "HKCU:\Control Panel\Colors"
+              Set-ItemProperty -Path $regPath -Name "Background" -Value "25 50 100" -ErrorAction SilentlyContinue
+              Write-Host "Local winter theme applied"
+            } catch {
+              Write-Host "WARNING: Could not apply theme: $($_.Exception.Message)"
+            }
+          }
+
+      - name: Install Chrome Browser
+        shell: powershell
+        run: |
+          Write-Host "Installing Google Chrome..."
+
+          $chromeInstallerUrl = "https://dl.google.com/chrome/install/googlechromestandaloneenterprise64.msi"
+          $chromeInstallerPath = "C:\Temp\ChromeInstaller.msi"
+
+          try {
+            [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+            Write-Host "Downloading Chrome..."
+            Invoke-WebRequest -Uri $chromeInstallerUrl -OutFile $chromeInstallerPath -TimeoutSec 60
+
+            Write-Host "Installing Chrome silently..."
+            Start-Process -FilePath "msiexec.exe" -ArgumentList "/i", "`"$chromeInstallerPath`"", "/qn", "/norestart" -Wait
+
+            Start-Sleep -Seconds 5
+
+            $chromeExe = "C:\Program Files\Google\Chrome\Application\chrome.exe"
+            if (Test-Path $chromeExe) {
+              Write-Host "Google Chrome installed successfully"
+            } else {
+              Write-Host "WARNING: Chrome installation completed but path verification failed"
+            }
+
+            Remove-Item $chromeInstallerPath -Force -ErrorAction SilentlyContinue
+          } catch {
+            Write-Host "WARNING: Error installing Chrome: $($_.Exception.Message)"
+          }
+
+      - name: Install System Utilities
+        shell: powershell
+        run: |
+          Write-Host "Installing system utilities..."
+
+          $wingetAvailable = $null -ne (Get-Command winget -ErrorAction SilentlyContinue)
+
+          if ($wingetAvailable) {
+            Write-Host "Using Windows Package Manager (winget)..."
+            $utilities = @("7zip.7zip", "Notepad++.Notepad++", "Git.Git")
+
+            foreach ($util in $utilities) {
+              try {
+                Write-Host "Installing $util..."
+                winget install -e -h --accept-source-agreements --accept-package-agreements $util 2>$null
+              } catch {
+                Write-Host "WARNING: Could not install $util"
+              }
+            }
+          } else {
+            Write-Host "WARNING: winget not available, skipping utilities"
+          }
+
+          Write-Host "Essential utilities step complete"
+
+      - name: Create Welcome UI Script
+        shell: powershell
+        run: |
+          Write-Host "Creating welcome UI..."
+
+          $welcomeScriptPath = "C:\Temp\WinterRDP_Welcome.ps1"
+          if (-not (Test-Path "C:\Temp")) { New-Item -ItemType Directory -Path "C:\Temp" -Force | Out-Null }
+          if (Test-Path $welcomeScriptPath) { Remove-Item $welcomeScriptPath -Force }
+
+          $lines = New-Object System.Collections.Generic.List[string]
+          $lines.Add('Add-Type -AssemblyName System.Windows.Forms')
+          $lines.Add('Add-Type -AssemblyName System.Drawing')
+          $lines.Add('$form = New-Object System.Windows.Forms.Form')
+          $lines.Add('$form.Text = "WinterRDP by DevLite"')
+          $lines.Add('$form.Size = New-Object System.Drawing.Size(700, 500)')
+          $lines.Add('$form.StartPosition = "CenterScreen"')
+          $lines.Add('$form.BackColor = [System.Drawing.Color]::FromArgb(25, 50, 100)')
+          $lines.Add('$form.ForeColor = [System.Drawing.Color]::White')
+          $lines.Add('$form.Font = New-Object System.Drawing.Font("Segoe UI", 12)')
+          $lines.Add('$form.TopMost = $true')
+          $lines.Add('$form.MaximizeBox = $false')
+          $lines.Add('$form.MinimizeBox = $false')
+          $lines.Add('$titleLabel = New-Object System.Windows.Forms.Label')
+          $lines.Add('$titleLabel.Text = "Welcome to WinterRDP by DevLite"')
+          $lines.Add('$titleLabel.AutoSize = $true')
+          $lines.Add('$titleLabel.Font = New-Object System.Drawing.Font("Segoe UI", 20, [System.Drawing.FontStyle]::Bold)')
+          $lines.Add('$titleLabel.ForeColor = [System.Drawing.Color]::Cyan')
+          $lines.Add('$titleLabel.Location = New-Object System.Drawing.Point(40, 40)')
+          $lines.Add('$titleLabel.MaximumSize = New-Object System.Drawing.Size(620, 0)')
+          $lines.Add('$form.Controls.Add($titleLabel)')
+          $lines.Add('$welcomeLabel = New-Object System.Windows.Forms.Label')
+          $lines.Add('$msg = "You are now connected to WinterRDP." + [Environment]::NewLine + [Environment]::NewLine + "Your remote session is ready for use."')
+          $lines.Add('$welcomeLabel.Text = $msg')
+          $lines.Add('$welcomeLabel.AutoSize = $false')
+          $lines.Add('$welcomeLabel.Width = 600')
+          $lines.Add('$welcomeLabel.Height = 160')
+          $lines.Add('$welcomeLabel.Location = New-Object System.Drawing.Point(40, 130)')
+          $lines.Add('$welcomeLabel.Font = New-Object System.Drawing.Font("Segoe UI", 13)')
+          $lines.Add('$welcomeLabel.ForeColor = [System.Drawing.Color]::White')
+          $lines.Add('$form.Controls.Add($welcomeLabel)')
+          $lines.Add('$sysInfoLabel = New-Object System.Windows.Forms.Label')
+          $lines.Add('$sysText = "System: " + [System.Environment]::MachineName + " | User: " + [System.Environment]::UserName + " | Time: " + (Get-Date)')
+          $lines.Add('$sysInfoLabel.Text = $sysText')
+          $lines.Add('$sysInfoLabel.AutoSize = $true')
+          $lines.Add('$sysInfoLabel.Location = New-Object System.Drawing.Point(40, 350)')
+          $lines.Add('$sysInfoLabel.Font = New-Object System.Drawing.Font("Segoe UI", 10)')
+          $lines.Add('$sysInfoLabel.ForeColor = [System.Drawing.Color]::LightGray')
+          $lines.Add('$form.Controls.Add($sysInfoLabel)')
+          $lines.Add('$closeButton = New-Object System.Windows.Forms.Button')
+          $lines.Add('$closeButton.Text = "Continue"')
+          $lines.Add('$closeButton.Location = New-Object System.Drawing.Point(280, 410)')
+          $lines.Add('$closeButton.Size = New-Object System.Drawing.Size(140, 40)')
+          $lines.Add('$closeButton.Font = New-Object System.Drawing.Font("Segoe UI", 12)')
+          $lines.Add('$closeButton.ForeColor = [System.Drawing.Color]::Black')
+          $lines.Add('$closeButton.BackColor = [System.Drawing.Color]::Cyan')
+          $lines.Add('$closeButton.FlatStyle = [System.Windows.Forms.FlatStyle]::Flat')
+          $lines.Add('$closeButton.Add_Click({ $form.Close() })')
+          $lines.Add('$form.Controls.Add($closeButton)')
+          $lines.Add('[void]$form.ShowDialog()')
+
+          Set-Content -Path $welcomeScriptPath -Value $lines -Force -Encoding UTF8
+
+          Write-Host "Welcome UI script created: $welcomeScriptPath"
+
+          $taskName = "WinterRDP-Welcome"
+
+          try {
+            $action = New-ScheduledTaskAction -Execute "powershell.exe" -Argument "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$welcomeScriptPath`""
+            $trigger = New-ScheduledTaskTrigger -AtLogOn
+            $principal = New-ScheduledTaskPrincipal -UserId "$env:USERNAME" -LogonType Interactive
+            Unregister-ScheduledTask -TaskName $taskName -Confirm:$false -ErrorAction SilentlyContinue
+            Register-ScheduledTask -TaskName $taskName -Action $action -Trigger $trigger -Principal $principal -Force -ErrorAction SilentlyContinue | Out-Null
+            Write-Host "Welcome UI scheduled for next logon"
+          } catch {
+            Write-Host "WARNING: Could not schedule welcome UI for startup: $($_.Exception.Message)"
+          }
+
+      - name: Get AnyDesk Connection Details
+        shell: powershell
+        run: |
+          Write-Host ""
+          Write-Host "===================================================="
+          Write-Host "          WinterRDP Setup Complete"
+          Write-Host "===================================================="
+          Write-Host ""
+
+          $anyDeskExe = "C:\Program Files (x86)\AnyDesk\AnyDesk.exe"
+
+          if (Test-Path $anyDeskExe) {
+            $anyDeskId = & $anyDeskExe --get-id 2>&1
+            Write-Host "AnyDesk Remote ID: $anyDeskId"
+          } else {
+            Write-Host "WARNING: AnyDesk executable not found, cannot retrieve ID"
+          }
+
+          Write-Host ""
+          Write-Host "Password: ${{ env.ANYDESK_PASSWORD }}"
+          Write-Host ""
+          Write-Host "TO CONNECT FROM MOBILE:"
+          Write-Host "1. Install the AnyDesk app on your phone"
+          Write-Host "2. Enter the Remote ID shown above"
+          Write-Host "3. Enter the password when prompted"
+          Write-Host "4. Tap Connect"
+          Write-Host ""
+          Write-Host "Session Duration: ${{ env.SESSION_DURATION }} minutes"
+          Write-Host "Start Time: $(Get-Date)"
+
+      - name: Keep Session Alive
+        shell: powershell
+        run: |
+          Write-Host "Session will remain active for ${{ env.SESSION_DURATION }} minutes"
+
+          $sessionDurationSeconds = [int]"${{ env.SESSION_DURATION }}" * 60
+          $endTime = (Get-Date).AddSeconds($sessionDurationSeconds)
+
+          while ((Get-Date) -lt $endTime) {
+            Write-Host "$(Get-Date -Format 'HH:mm:ss') - Session active..."
+            Start-Sleep -Seconds 30
+          }
+
+          Write-Host "Session duration completed"
+
+      - name: Cleanup
+        if: always()
+        shell: powershell
+        run: |
+          Write-Host "Cleaning up resources..."
+          try {
+            Stop-Service -Name "AnyDesk" -Force -ErrorAction SilentlyContinue
+            Write-Host "AnyDesk service stopped"
+          } catch {
+            Write-Host "WARNING: Could not stop AnyDesk service"
+          }
